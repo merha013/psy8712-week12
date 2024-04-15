@@ -7,7 +7,11 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-# Script Settings and Resources
+```
+
+## Script Settings and Resources
+
+```{r}
 library(tidyverse)
 library(RedditExtractoR)
 library(jsonlite)
@@ -22,8 +26,9 @@ library(topicmodels)
 setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
 ```
 
+## Data Import and Cleaning
+
 ```{r}
-# Data Import and Cleaning
 # data <- find_thread_urls( 
 #  subreddit = "IOPsychology", 
 #  sort_by = "new",
@@ -38,26 +43,35 @@ setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
 #  upvotes = thread_details$threads$upvotes
 # )
 # write_csv(week12_tbl, file = "../data/week12tbl.csv")
-week12_tbl <- read_csv(file = "../data/week12tbl.csv")
+
+week12_tbl <- read_csv(file = "../data/week12tbl.csv") # pull tbl from saved file
 ```
 
 ```{r}
 # Create Corpus
 io_corpus_original <- VCorpus(VectorSource(week12_tbl$title))
 
-# Preprocessing pipeline
+# Create a function to remove documents with zero text
+removeZeroText = function(x) {
+    return(nchar(stripWhitespace(x$content)[[1]]) > 0)}
+
+# Preprocessing pipeline (this has a slightly noticable run time)
 io_corpus <- io_corpus_original %>%
-  tm_map(content_transformer(replace_abbreviation)) %>%
-  tm_map(content_transformer(replace_contraction)) %>%
-  tm_map(content_transformer(str_to_lower)) %>%
-  tm_map(removeNumbers) %>%
-  tm_map(removePunctuation) %>%
-  tm_map(removeWords, c(stopwords("en"), "io psychology", "io", 
+  tm_map(content_transformer(replace_abbreviation)) %>% # remove abbreviations
+  tm_map(content_transformer(replace_contraction)) %>% # replace contractions
+  tm_map(content_transformer(str_to_lower)) %>% # make everything lowercase
+  tm_map(removeNumbers) %>% # get rid of numbers
+  tm_map(removePunctuation) %>% # get rid of puncuation marks
+  tm_map(removeWords, stopwords("en")) %>% # enables focus on relevant content
+  tm_map(removeWords, c("io psychology", "io psychologist", 
                         "riopsychology", "io psych", "io psychs",
                         "industrial organizational psychologists",
-                        "industrial organizational psychology")) %>%
-  tm_map(stripWhitespace) %>%
-  tm_map(content_transformer(lemmatize_words))  
+                        "industrial organizational psychology",
+                        "organisational psychology", "io",
+                        "organizational psychology")) %>% # the order matters
+  # tm_map(stripWhitespace) %>% # get rid of extra white space
+  tm_map(content_transformer(lemmatize_words)) %>% # reduces words to base form 
+  tm_filter(removeZeroText) # use predefined function to remove docs w/zero text
 
 # Function to see how preprocessing is going
 compare_them <- function() {
@@ -66,5 +80,95 @@ compare_them <- function() {
   print(io_corpus[[casenum]]$content)
 }
 compare_them()
+```
+
+```{r}
+# create DTM containing unigrams and bigrams
+bigram_tokenizer <- function(x) NGramTokenizer(x, Weka_control(min=1, max=2))
+io_dtm <- io_corpus %>%
+  DocumentTermMatrix(control = list(tokenize = bigram_tokenizer))
+
+# View the DTM
+io_dtm %>% as.matrix %>% as_tibble %>% View
+
+# Create a DTM with sparse terms eliminated
+io_slim_dtm <- removeSparseTerms(io_dtm, .998)
+
+# Check to confirm that I've got the right ratio between 2:1 and 3:1
+print(as.integer(
+  c(io_dtm$ncol, io_slim_dtm$ncol, io_dtm$ncol/io_slim_dtm$ncol)))
+
+### I'M HAVING A PROBLEM IN THIS SECTION AS MY io_dtm is very large and I can't get to a 2:1 or 3:1 ratio with sparse terms eliminated... :( 
+```
+
+```{r}
+# Categorize posts into topics
+ 
+# Topic modeling - determine number of topics to extract
+io_dtm_tune <- FindTopicsNumber(
+  io_dtm,
+  topics = seq(2,10,1), # 2 topics to 10 topics jumping by 1 each time
+  metrics = c(
+    "Griffiths2004",
+    "CaoJuan2009",
+    "Arun2010",
+    "Deveaud2014"),
+  verbose = T
+)
+FindTopicsNumber_plot(io_dtm_tune) # 4-5 topics is (intersection location)
+  # seeing parabalas on both is the best case
+
+# Topic modeling - actual modeling
+topics_tbl <- LDA(io_dtm, 4)
+tidy(topics_tbl, matrix="beta") %>%
+  group_by(topic) %>%
+  top_n(10, beta) %>%
+  arrange(topic, -beta) %>%
+  View
+tidy(lda_results, matrix="gamma") %>%
+  View
+
+# Questions
+## 1. Using the beta matrix alone, what topics would you conclude your final topic list maps onto? (e.g., topic 1, 2, 3...n each reflect what substantive topic construct? Use your best judgment.)
+###
+
+## 2. Look at the original text of documents with the highest and lowest probabilities assigned to each document. Do your topic names derived from your interpretation of the beta matrix conceptually match with the content of the original posts? What kind of validity evidence does your answer to this question represent?
+### 
+```
+
+## Visualization
+
+```{r, warning = FALSE}
+# Make a pretty word cloud
+io_dtm_tbl <- io_dtm %>% as.matrix %>% as_tibble
+wordcloud(
+  words = names(io_dtm_tbl),
+  freq = colSums(io_dtm_tbl),
+  colors = brewer.pal(9,"Dark2")
+)
+
+# This wordcloud shows that ....
+```
+
+## Analysis
+
+```{r}
 
 ```
+
+```{r}
+# Create a dataset that contains topics_tbl plus the upvote count
+final_tbl <- tibble(
+  topics = topics_tbl$topics,
+  upvotes = week12_tbl$upvotes)
+
+final_tbl <- week12_tbl %>%
+  merge(topics_tbl$topics)
+```
+
+```{r}
+# Run both a statistical and machine learning analysis to determine if upvotes differs by topic
+
+```
+
+## 
