@@ -194,7 +194,8 @@ topics_tbl <- week12_tbl %>%
 ### advice. Factor 2 has the same problem. Then, Factor 3's highest probablity 
 ### document appears more alligned with Factor 1 and it's lowest probablity 
 ### document is actually more aligned with research (proposed Factor 3). This 
-### confirms what I predicted in Question 1 with such low beta values. The topic ### mapping is extremely weak with a lot of overlap.
+### confirms what I predicted in Question 1 with such low beta values. The topic
+### mapping is extremely weak with a lot of overlap.
 
 
 ## highest probablity for assignment to factor 1 = document 249
@@ -289,7 +290,8 @@ lm_model_ml
 
 # Results: Again there is no significant relationship between topic and upvotes. 
 ## Only 1.07% of the variability in upvotes is explained by topic. Furthermore, the
-## holdout correlation (essentially zero) indicates that the model predictions have ## very small correlation with the actual upvote values in the holdout dataset.
-## Note: Each time I re-run through the data, I get a different R-squared values, 
+## holdout correlation (essentially zero) indicates that the model predictions have
+## very small correlation with the actual upvote values in the holdout dataset.
+## Note: Each time I re-run through the data, I get a different R-squared values,
 ## but they are always very low.
 ```
