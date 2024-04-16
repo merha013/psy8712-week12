@@ -44,7 +44,8 @@ setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
 # )
 # write_csv(week12_tbl, file = "../data/week12tbl.csv")
 
-week12_tbl <- read_csv(file = "../data/week12tbl.csv") # pull tbl from saved file
+week12_tbl <- read_csv(file = "../data/week12tbl.csv", show_col_types = FALSE)
+  # pull tbl from saved file
 ```
 
 ```{r}
@@ -69,9 +70,10 @@ io_corpus <- io_corpus_original %>%
                         "industrial organizational psychology",
                         "organisational psychology", "io",
                         "organizational psychology")) %>% # the order matters
-  # tm_map(stripWhitespace) %>% # get rid of extra white space
+  tm_map(stripWhitespace) %>% # get rid of extra white space
   tm_map(content_transformer(lemmatize_words)) %>% # reduces words to base form 
   tm_filter(removeZeroText) # use predefined function to remove docs w/zero text
+    ## removeZeroText didn't actually remove anything...
 
 # Function to see how preprocessing is going
 compare_them <- function() {
@@ -92,17 +94,15 @@ io_dtm <- io_corpus %>%
 io_dtm %>% as.matrix %>% as_tibble %>% View
 
 # Create a DTM with sparse terms eliminated
-io_slim_dtm <- removeSparseTerms(io_dtm, .998)
+io_slim_dtm <- removeSparseTerms(io_dtm, .997)
 
 # Check to confirm that I've got the right ratio between 2:1 and 3:1
 print(as.integer(
-  c(io_dtm$ncol, io_slim_dtm$ncol, io_dtm$ncol/io_slim_dtm$ncol)))
-
-### I'M HAVING A PROBLEM IN THIS SECTION AS MY io_dtm is very large and I can't get to a 2:1 or 3:1 ratio with sparse terms eliminated... :( 
+  c(io_dtm$nrow, io_slim_dtm$ncol, io_dtm$nrow/io_slim_dtm$ncol)))
 ```
 
 ```{r}
-# Categorize posts into topics
+# Use latent Dirichlet allocation to ategorize posts into topics
  
 # Topic modeling - determine number of topics to extract
 io_dtm_tune <- FindTopicsNumber(
@@ -144,7 +144,8 @@ io_dtm_tbl <- io_dtm %>% as.matrix %>% as_tibble
 wordcloud(
   words = names(io_dtm_tbl),
   freq = colSums(io_dtm_tbl),
-  colors = brewer.pal(9,"Dark2")
+  colors = brewer.pal(9,"Dark2"),
+  max.words=50  # otherwise this becomes a very cluttered wordcloud
 )
 
 # This wordcloud shows that ....
