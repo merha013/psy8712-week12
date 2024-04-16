@@ -68,7 +68,7 @@ io_corpus <- io_corpus_original %>%
                         "riopsychology", "io psych", "io psychs",
                         "industrial organizational psychologists",
                         "industrial organizational psychology",
-                        "organisational psychology", "io",
+                        "organisational psychology", "io", "psychology",
                         "organizational psychology")) %>% # the order matters
   tm_map(stripWhitespace) %>% # get rid of extra white space
   tm_map(content_transformer(lemmatize_words)) %>% # reduces words to base form 
@@ -91,7 +91,9 @@ io_dtm <- io_corpus %>%
   DocumentTermMatrix(control = list(tokenize = bigram_tokenizer))
 
 # View the DTM
-io_dtm %>% as.matrix %>% as_tibble %>% View
+io_dtm_tbl <- io_dtm %>% as.matrix %>% as_tibble
+io_dtm_tbl %>%
+  View
 
 # Create a DTM with sparse terms eliminated
 io_slim_dtm <- removeSparseTerms(io_dtm, .997)
@@ -102,11 +104,16 @@ print(as.integer(
 ```
 
 ```{r}
-# Use latent Dirichlet allocation to ategorize posts into topics
- 
+# Use latent Dirichlet allocation to categorize posts into topics
+
+# First, remove empty rows
+tokenCounts <- apply(io_slim_dtm, 1, sum)
+cleaned_io_dtm <- io_slim_dtm[tokenCounts>0,]  # removed 67 docs
+
 # Topic modeling - determine number of topics to extract
+# I did not parallelize as it only took a few second to compute
 io_dtm_tune <- FindTopicsNumber(
-  io_dtm,
+  cleaned_io_dtm,
   topics = seq(2,10,1), # 2 topics to 10 topics jumping by 1 each time
   metrics = c(
     "Griffiths2004",
@@ -115,32 +122,81 @@ io_dtm_tune <- FindTopicsNumber(
     "Deveaud2014"),
   verbose = T
 )
-FindTopicsNumber_plot(io_dtm_tune) # 4-5 topics is (intersection location)
-  # seeing parabalas on both is the best case
+FindTopicsNumber_plot(io_dtm_tune) # 3-4 topics (intersection location)
+  # seeing parabalas on both would be the best case, but I don't see that :(
 
 # Topic modeling - actual modeling
-topics_tbl <- LDA(io_dtm, 4)
-tidy(topics_tbl, matrix="beta") %>%
+topics_model <- LDA(cleaned_io_dtm, 3) # tested with 3 & 4 topics
+  # Selected 3 topics since the gammas & betas are weak either way and there
+  # is a lot of overlap in the words associated with each topic
+
+lda_betas <- tidy(topics_model, matrix="beta") # a good beta is 0.7+
+
+lda_betas %>%
   group_by(topic) %>%
-  top_n(10, beta) %>%
+  top_n(15, beta) %>%
   arrange(topic, -beta) %>%
+  View  
+  # Note: new results are created each time this and the above are recalculated
+
+lda_gammas <- tidy(topics_model, matrix="gamma") 
+
+lda_gammas %>%
+  group_by(document) %>%
+  top_n(1, gamma) %>%
+  slice(1) %>%
+  ungroup %>%
+  mutate(document = as.numeric(document)) %>%
+  arrange(document) %>%
   View
-tidy(lda_results, matrix="gamma") %>%
-  View
+  # Note: new results are created each time this and the above are recalculated
+
+# Create a tibble including doc_id, original post title, topic, & probability
+topics_tbl <- week12_tbl %>%
+  mutate(doc_id = 1:951) %>%
+  mutate(doc_id = as.character(doc_id)) %>%
+  full_join(lda_gammas, by = c("doc_id" = "document")) %>% 
+  mutate(gamma = as.numeric(gamma)) %>% 
+  rename(probability = gamma,
+         original = title) %>%
+  select(doc_id, everything(), -upvotes)
 
 # Questions
 ## 1. Using the beta matrix alone, what topics would you conclude your final topic list maps onto? (e.g., topic 1, 2, 3...n each reflect what substantive topic construct? Use your best judgment.)
-###
+### Since a good beta value would be around 0.7+ and my highest beta value is 
+### only 0.05, this topic mapping is extremely weak. If I have to force three
+### topics, they would be 1- career advice, 2- readings & discussions, and 
+### 3- research. However, I took a bit of discression in coming up with these.
 
 ## 2. Look at the original text of documents with the highest and lowest probabilities assigned to each document. Do your topic names derived from your interpretation of the beta matrix conceptually match with the content of the original posts? What kind of validity evidence does your answer to this question represent?
-### 
+### Unfortunately, by pulling each of the top and bottom documents associated with 
+### each factor and comparing how much they align with the three factors identifed 
+### in Question 1, the three factors don't look ideal. The highest and lowest 
+### probability documents for Factor 1 both have to do with career & education 
+### advice. Factor 2 has the same problem. Then, Factor 3's highest probablity 
+### document appears more alligned with Factor 1 and it's lowest probablity 
+### document is actually more aligned with research (proposed Factor 3). This 
+### confirms what I predicted in Question 1 with such low beta values. The topic ### mapping is extremely weak with a lot of overlap.
+
+
+## highest probablity for assignment to factor 1 = document 249
+print(io_corpus_original[[249]]$content)
+## lowest probablity for assignment to factor 1 = document 560
+print(io_corpus_original[[560]]$content)
+## highest probablity for assignment to factor 2 = document 10
+print(io_corpus_original[[10]]$content)
+## lowest probablity for assignment to factor 2 = document 486
+print(io_corpus_original[[486]]$content)
+## highest probablity for assignment to factor 3 = document 140
+print(io_corpus_original[[140]]$content)
+## highest probablity for assignment to factor 3 = document 7
+print(io_corpus_original[[7]]$content)
 ```
 
 ## Visualization
 
 ```{r, warning = FALSE}
 # Make a pretty word cloud
-io_dtm_tbl <- io_dtm %>% as.matrix %>% as_tibble
 wordcloud(
   words = names(io_dtm_tbl),
   freq = colSums(io_dtm_tbl),
@@ -148,23 +204,24 @@ wordcloud(
   max.words=50  # otherwise this becomes a very cluttered wordcloud
 )
 
-# This wordcloud shows that ....
+# This wordcloud shows the top 50 words associated with the r/iopsychology website
+# after being processed and assigned to the io_dtm_tbl. The size and colors of the 
+# words are associated with the number of times they are mentioned.
 ```
 
 ## Analysis
 
 ```{r}
-
-```
-
-```{r}
 # Create a dataset that contains topics_tbl plus the upvote count
-final_tbl <- tibble(
-  topics = topics_tbl$topics,
-  upvotes = week12_tbl$upvotes)
-
 final_tbl <- week12_tbl %>%
-  merge(topics_tbl$topics)
+  mutate(doc_id = 1:951) %>%
+  mutate(doc_id = as.character(doc_id)) %>%
+  full_join(lda_gammas, by = c("doc_id" = "document")) %>% 
+  mutate(gamma = as.numeric(gamma)) %>% 
+  rename(probability = gamma,
+         original = title) %>%
+  select(doc_id, everything(), upvotes) 
+  # rather than removing upvotes, I just put it at the end
 ```
 
 ```{r}
