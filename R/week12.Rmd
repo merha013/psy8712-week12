@@ -23,6 +23,9 @@ library(wordcloud)
 library(tidytext)
 library(ldatuning)
 library(topicmodels)
+library(randomForest)
+library(haven)
+library(caret)
 setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
 ```
 
@@ -103,6 +106,8 @@ print(as.integer(
   c(io_dtm$nrow, io_slim_dtm$ncol, io_dtm$nrow/io_slim_dtm$ncol)))
 ```
 
+lda_gammas
+
 ```{r}
 # Use latent Dirichlet allocation to categorize posts into topics
 
@@ -134,7 +139,7 @@ lda_betas <- tidy(topics_model, matrix="beta") # a good beta is 0.7+
 
 lda_betas %>%
   group_by(topic) %>%
-  top_n(15, beta) %>%
+  top_n(951, beta) %>%
   arrange(topic, -beta) %>%
   View  
   # Note: new results are created each time this and the above are recalculated
@@ -154,12 +159,19 @@ lda_gammas %>%
 # Create a tibble including doc_id, original post title, topic, & probability
 topics_tbl <- week12_tbl %>%
   mutate(doc_id = 1:951) %>%
-  mutate(doc_id = as.character(doc_id)) %>%
+  mutate(doc_id = as.character(doc_id)) %>% # so that I can join it with lda_gammas
   full_join(lda_gammas, by = c("doc_id" = "document")) %>% 
-  mutate(gamma = as.numeric(gamma)) %>% 
-  rename(probability = gamma,
-         original = title) %>%
-  select(doc_id, everything(), -upvotes)
+    # merges data and includes probability for all three topics
+  mutate(gamma = as.numeric(gamma)) %>% # so that I can order them numerically
+  rename(probability = gamma, # rename gamma as probability
+         original = title) %>% # rename title as original
+  select(doc_id, everything(), -upvotes) %>% # put doc_id first & remove upvotes
+  arrange(doc_id, desc(probability)) %>% 
+    # arranging probability in descending order so I can then just keep the
+    # highest ranked topic for each doc_id
+  distinct(doc_id, .keep_all=TRUE) %>% # only keep highest ranked topic per doc_id
+  mutate(doc_id = as.numeric(doc_id)) %>% # so that I can reorder by doc_id again
+  arrange(doc_id, doc_id) # to help me ensure I'm not missing anything
 
 # Questions
 ## 1. Using the beta matrix alone, what topics would you conclude your final topic list maps onto? (e.g., topic 1, 2, 3...n each reflect what substantive topic construct? Use your best judgment.)
@@ -215,18 +227,62 @@ wordcloud(
 # Create a dataset that contains topics_tbl plus the upvote count
 final_tbl <- week12_tbl %>%
   mutate(doc_id = 1:951) %>%
-  mutate(doc_id = as.character(doc_id)) %>%
+  mutate(doc_id = as.character(doc_id)) %>% # so that I can join it with lda_gammas
   full_join(lda_gammas, by = c("doc_id" = "document")) %>% 
-  mutate(gamma = as.numeric(gamma)) %>% 
-  rename(probability = gamma,
-         original = title) %>%
-  select(doc_id, everything(), upvotes) 
-  # rather than removing upvotes, I just put it at the end
+    # merges data and includes probability for all three topics
+  mutate(gamma = as.numeric(gamma)) %>% # so that I can order them numerically
+  rename(probability = gamma, # rename gamma as probability
+         original = title) %>% # rename title as original
+  select(doc_id, original, topic, probability, upvotes) %>% 
+    # keep upvotes & put at the end
+  arrange(doc_id, desc(probability)) %>% 
+    # arranging probability in descending order so I can then just keep the
+    # highest ranked topic for each doc_id
+  distinct(doc_id, .keep_all=TRUE) %>% # only keep highest ranked topic per doc_id
+  mutate(doc_id = as.numeric(doc_id)) %>% # so that I can reorder by doc_id again
+  arrange(doc_id, doc_id) # to help me ensure I'm not missing anything
 ```
 
 ```{r}
-# Run both a statistical and machine learning analysis to determine if upvotes differs by topic
+# Run a statistical analysis to determine if upvotes differs by topic
+lm_model <- lm(upvotes ~ topic, data = final_tbl)
+summary(lm_model)
 
+# Results: The null hypothesis is that there is no relationship between the 
+## independent variable and dependent variable. A p-value of 0.6384 means we fail 
+## to reject the null hypothesis and conclude that topic does not have a 
+## statistically significant effect on upvotes.
+## Note: Each time I re-run through the data, I get a different p-value, but it is 
+## always well over 0.05
 ```
 
-## 
+```{r}
+# Run a machine learning analysis to determine if upvotes differs by topic
+holdout_indices <- createDataPartition(final_tbl$upvotes,
+                                       p = .25,
+                                       list = T)$Resample1
+test_tbl <- final_tbl[holdout_indices,] # create test tbl
+training_tbl <- final_tbl[-holdout_indices,] # create training tbl for holdout
+training_folds <- createFolds(training_tbl$upvotes) # define training folds
+
+# create random forest model using ranger 
+lm_model_ml <- train(
+  upvotes ~ topic,
+  final_tbl,
+  method="lm",
+  na.action = na.pass,
+  preProcess = c("center","scale","zv","nzv","medianImpute"),
+  trControl = trainControl(method="cv", 
+                           number=10, # number of folds
+                           verboseIter=T, 
+                           indexOut = training_folds)
+)
+lm_model_ml
+(cv_lm_model_ml <- max(lm_model_ml$results$Rsquared))
+(holdout_lm_model_ml <- cor(predict(lm_model_ml, test_tbl, na.action = na.pass), test_tbl$upvotes)^2)
+
+# Results: Again there is no significant relationship between topic and upvotes. 
+## Only 1.07% of the variability in upvotes is explained by topic. Furthermore, the ## holdout correlation (essentially zero) indicates that the model predictions have ## very small correlation with the actual upvote values in the holdout dataset.
+## Note: Each time I re-run through the data, I get a different R-squared values, 
+## but they are always very low.
+```
